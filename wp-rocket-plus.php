@@ -7,21 +7,19 @@ Author: Gabor Angyal
 Author URI: https://woodevops.com
 */
 
-// Prevent direct access to the file
 if ( !defined( 'ABSPATH' ) ) {
     exit;
 }
 
-// Hook to add admin menu
 add_action( 'admin_menu', 'wp_rocket_plus_add_admin_menu' );
 
 function wp_rocket_plus_add_admin_menu() {
     add_menu_page(
-        'WP Rocket Plus Settings', // Page title
-        'WP Rocket Plus',          // Menu title
-        'manage_options',     // Capability
-        'wp-rocket-plus',          // Menu slug
-        'wp_rocket_plus_settings_page' // Callback function
+        'WP Rocket Plus Settings',
+        'WP Rocket Plus',
+        'manage_options',
+        'wp-rocket-plus',
+        'wp_rocket_plus_settings_page'
     );
 }
 
@@ -29,101 +27,68 @@ function wp_rocket_plus_settings_page() {
     ?>
     <div class="wrap">
         <h1>WP Rocket Plus Settings</h1>
-        <form method="post" action="options.php">
-            <?php
-            // Output security fields for the registered setting
-            settings_fields( 'wp_rocket_plus_settings_group' );
-            // Output setting sections and their fields
-            do_settings_sections( 'wp-rocket-plus' );
-            // Output save settings button
-            submit_button();
-            ?>
-        </form>
         <form method="post">
             <input type="hidden" name="wp_rocket_plus_button_action" value="1">
-            <?php submit_button('Execute Action', 'primary', 'execute_action'); ?>
+            <?php submit_button('Exclude all pages from used css feature', 'primary', 'execute_action'); ?>
         </form>
     </div>
     <?php
 }
 
-// Hook to register plugin settings
-add_action( 'admin_init', 'wp_rocket_plus_settings_init' );
-
-function wp_rocket_plus_settings_init() {
-    register_setting( 'wp_rocket_plus_settings_group', 'wp_rocket_plus_settings' );
-
-    add_settings_section(
-        'wp_rocket_plus_settings_section',
-        'Settings',
-        'wp_rocket_plus_settings_section_callback',
-        'wp-rocket-plus'
-    );
-
-    add_settings_field(
-        'wp_rocket_plus_setting_field',
-        'Setting Field',
-        'wp_rocket_plus_setting_field_callback',
-        'wp-rocket-plus',
-        'wp_rocket_plus_settings_section'
-    );
-}
-
-function wp_rocket_plus_settings_section_callback() {
-    echo 'Enter your settings below:';
-}
-
-function wp_rocket_plus_setting_field_callback() {
-    $setting = get_option( 'wp_rocket_plus_settings' );
-    ?>
-    <input type="text" name="wp_rocket_plus_settings[wp_rocket_plus_setting_field]" value="<?php echo isset( $setting['wp_rocket_plus_setting_field'] ) ? esc_attr( $setting['wp_rocket_plus_setting_field'] ) : ''; ?>">
-    <?php
-}
-
-// Hook to handle button action
 add_action( 'admin_post_wp_rocket_plus_button_action', 'wp_rocket_plus_button_action_callback' );
 
 function wp_rocket_plus_button_action_callback() {
-    log_action('wp_rocket_plus_button_action_callback');
-    // Check if the user has the required capability
     if ( ! current_user_can( 'manage_options' ) ) {
         wp_die( 'Unauthorized user' );
     }
 
-    // Perform your custom action here
-    // For example, let's just output a message to the admin area
-    add_action( 'admin_notices', 'wp_rocket_plus_action_success_notice' );
+    set_rocket_exclude_remove_unused_css();
 
-    // Redirect to the settings page to prevent resubmission
     wp_redirect( $_SERVER['HTTP_REFERER'] );
     exit;
 }
 
+add_action( 'admin_notices', 'wp_rocket_plus_action_success_notice' );
 function wp_rocket_plus_action_success_notice() {
-    log_action('wp_rocket_plus_action_success_notice');
+    $msg = get_transient('wp_rocket_plus_admin_notice');
+    if ($msg != null) {
     ?>
     <div class="notice notice-success is-dismissible">
-        <p><?php _e( 'Action executed successfully!', 'wp-rocket-plus' ); ?></p>
+        <p><?php _e( $msg, 'wp-rocket-plus' ); ?></p>
     </div>
     <?php
+    }
 }
 
-// Handle the button action form submission
 add_action( 'admin_init', 'wp_rocket_plus_handle_button_action' );
 
 function wp_rocket_plus_handle_button_action() {
     if ( isset( $_POST['wp_rocket_plus_button_action'] ) ) {
-        log_action('wp_rocket_plus_handle_button_action');
         do_action( 'admin_post_wp_rocket_plus_button_action' );
     }
 }
 
-function log_action($msg) {
-    $upload_dir = wp_upload_dir();
-    $log_file = $upload_dir['basedir'] . '/my_plugin_log.txt';
-    $current_time = current_time( 'mysql' );
+function set_rocket_exclude_remove_unused_css() {
+    global $wpdb;
 
-    $log_message = "Action executed at: " . $current_time . " " . $msg . "\n";
+    $post_ids = $wpdb->get_col("
+        SELECT ID FROM {$wpdb->posts} 
+        WHERE (post_type = 'post' OR post_type = 'product' OR post_type = 'page') 
+        AND post_status = 'publish'
+    ");
 
-    file_put_contents( $log_file, $log_message, FILE_APPEND | LOCK_EX );
+    $term_ids = $wpdb->get_col("
+        SELECT term_id FROM {$wpdb->term_taxonomy} 
+        WHERE taxonomy = 'product_cat'
+    ");
+
+    foreach ($post_ids as $post_id) {
+        update_post_meta($post_id, '_rocket_exclude_remove_unused_css', 1);
+    }
+
+    foreach ($term_ids as $term_id) {
+        update_term_meta($term_id, '_rocket_exclude_remove_unused_css', 1);
+    }
+
+    set_transient('wp_rocket_plus_admin_notice', count($post_ids) . ' pages, and ' . count($term_ids) . ' category pages excluded from the used CSS function', 3);
 }
